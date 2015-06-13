@@ -2435,10 +2435,12 @@ void Host_Version_f(void)
 /* <3d516> ../engine/host_cmd.c:3382 */
 void Host_FullInfo_f(void)
 {
-	char key[512];
-	char value[512];
-	char *o;
-	char *s;
+	char key[MAX_KV_LEN];
+	char value[MAX_KV_LEN];
+	qboolean iskey = FALSE;
+	char* s;
+	char* next;
+	int len;
 
 	if (Cmd_Argc() != 2)
 	{
@@ -2447,29 +2449,38 @@ void Host_FullInfo_f(void)
 	}
 
 	s = (char *)Cmd_Argv(1);
-	if (*s == '\\')
-		s++;
 
-	while (*s)
+	while (*s++ == '\\')
 	{
-		o = key;
-		while (*s && *s != '\\')
-			*o++ = *s++;
-		*o = 0;
+		iskey ^= 1;
 
-		if (!*s)
+		if (iskey)
 		{
-			Con_Printf("MISSING VALUE\n");
-			return;
-		}
+			next = Q_strchr(s, '\\');
+			if (!next)
+				return;
 
-		o = value;
-		s++;
-		while (*s && *s != '\\')
-			*o++ = *s++;
-		*o = 0;
-		if (*s)
-			s++;
+			len = next - s;
+			if (len == 0 || len > sizeof key - 1)
+				return;
+
+			Q_memcpy(key, s, len);
+			key[len] = '\0';
+		}
+		else
+		{
+			next = Q_strchr(s, '\\');
+			if (!next)
+				for (next = s; *next; next++) // go to EOS
+					;
+
+			len = next - s;
+			if (len == 0 || len > sizeof value - 1)
+				return;
+
+			Q_memcpy(value, s, len);
+			value[len] = '\0';
+		}
 
 		if (cmd_source == src_command)
 		{

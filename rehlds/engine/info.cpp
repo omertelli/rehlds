@@ -46,62 +46,41 @@ const char *Info_ValueForKey(const char *s, const char *key)
 	// use few (two?) buffers so compares work without stomping on each other
 	static char value[INFO_MAX_BUFFER_VALUES][MAX_KV_LEN];
 	static int valueindex;
-	char pkey[MAX_KV_LEN];
-	char *c;
+	char* dst;
 	int nCount;
+	int len;
+	qboolean iskey = FALSE;
 
-	while (*s)
+	len = Q_strlen(key);
+
+	while (*s++ == '\\')
 	{
-		if (*s == '\\')
+		iskey ^= 1;
+
+		if (iskey)
 		{
-			s++;	// skip the slash
+			if (!Q_strncmp(s, key, len) && s[len] == '\\')
+			{
+				s += len + 1; // go to value
+				dst = value[valueindex];
+
+				for (nCount = 0; nCount < MAX_KV_LEN; nCount++)
+				{
+					if (*s == '\0' || *s == '\\')
+						break;
+
+					dst[nCount] = *s++;
+				}
+
+				dst[nCount] = '\0';
+				valueindex = (valueindex + 1) % INFO_MAX_BUFFER_VALUES;
+				return dst;
+			}
 		}
 
-		// Copy a key
-		nCount = 0;
-		c = pkey;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				return "";		// key should end with a \, not a NULL, but suppose its value as absent
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized key chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-		s++;	// skip the slash
-
-		// Copy a value
-		nCount = 0;
-		c = value[valueindex];
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;		// allow value to be ended with NULL
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized value chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-
-		if (!Q_strcmp(key, pkey))
-		{
-			c = value[valueindex];
-			valueindex = (valueindex + 1) % INFO_MAX_BUFFER_VALUES;
-			return c;
-		}
+		// skip to next slash
+		while (*s && *s != '\\')
+			s++;
 	}
 
 	return "";
@@ -110,12 +89,9 @@ const char *Info_ValueForKey(const char *s, const char *key)
 /* <40e38> ../engine/info.c:72 */
 void Info_RemoveKey(char *s, const char *key)
 {
-	char pkey[MAX_KV_LEN];
-	char value[MAX_KV_LEN];
-	char *start;
-	char *c;
-	int cmpsize;
-	int nCount;
+	char *next;
+	int len;
+	qboolean iskey = FALSE;
 
 	if (Q_strstr(key, "\\"))
 	{
@@ -123,131 +99,64 @@ void Info_RemoveKey(char *s, const char *key)
 		return;
 	}
 
-	cmpsize = Q_strlen(key);
-	if (cmpsize > MAX_KV_LEN - 1)
-		cmpsize = MAX_KV_LEN - 1;
+	len = Q_strlen(key);
 
-	while (*s)
+	while (*s++ == '\\')
 	{
-		start = s;
+		iskey ^= 1;
 
-		if (*s == '\\')
+		if (iskey)
 		{
-			s++;	// skip the slash
+			if (!Q_strncmp(s, key, len) && s[len] == '\\')
+			{
+				next = Q_strchr(s + len + 1, '\\'); // go to end of value
+
+				if (next)
+					Q_memmove(s, next + 1, Q_strlen(next)); // '\' + len = len + '\0'
+				else
+					s[-1] = '\0'; // key is last
+
+				break;
+			}
 		}
 
-		// Copy a key
-		nCount = 0;
-		c = pkey;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;		// key should end with a \, not a NULL, but allow to remove it
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized key chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-		if (*s)
-			s++;	// skip the slash
-
-		// Copy a value
-		nCount = 0;
-		c = value;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;		// allow value to be ended with NULL
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized value chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-
-		// Compare keys
-		if (!Q_strncmp(key, pkey, cmpsize))
-		{
-			Q_strcpy(start, s);	// remove this part
-			s = start;	// continue searching
-		}
+		// skip to next slash
+		while (*s && *s != '\\')
+			s++;
 	}
 }
 
 /* <40ecf> ../engine/info.c:136 */
 void Info_RemovePrefixedKeys(char *s, const char prefix)
 {
-	char pkey[MAX_KV_LEN];
-	char value[MAX_KV_LEN];
-	char *start;
-	char *c;
-	int nCount;
+	char *next;
+	qboolean iskey = FALSE;
 
-	while (*s)
+	while (*s++ == '\\')
 	{
-		start = s;
+		iskey ^= 1;
 
-		if (*s == '\\')
+		if (iskey)
 		{
-			s++;	// skip the slash
+			if (s[0] == prefix)
+			{
+				next = Q_strchr(s + 1, '\\'); // skip key
+				next = Q_strchr(next + 1, '\\'); // skip value
+
+				if (next)
+					Q_memmove(s, next + 1, Q_strlen(next)); // '\' + len = len + '\0'
+				else
+					s[-1] = '\0';
+
+				s--; // back to slash for continue
+				iskey = FALSE; // next field will be a key
+				continue;
+			}
 		}
 
-		// Copy a key
-		nCount = 0;
-		c = pkey;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;		// key should end with a \, not a NULL, but allow to remove it
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized key chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-		if (*s)
-			s++;	// skip the slash
-
-		// Copy a value
-		nCount = 0;
-		c = value;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;		// allow value to be ended with NULL
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized value chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-
-		if (pkey[0] == prefix)
-		{
-			Q_strcpy(start, s);	// remove this part
-			s = start;	// continue searching
-		}
+		// skip to next slash
+		while (*s && *s != '\\')
+			s++;
 	}
 }
 
@@ -287,86 +196,52 @@ qboolean Info_IsKeyImportant(const char *key)
 char *Info_FindLargestKey(char *s, int maxsize)
 {
 	static char largest_key[MAX_KV_LEN];
-	char key[MAX_KV_LEN];
-	char value[MAX_KV_LEN];
-	char *c;
-	int nCount;
 	int largest_size = 0;
-
-	largest_key[0] = 0;
-
-	while (*s)
+	const char* plargest = NULL;
+	int len;
+	char *next;
+	qboolean iskey = FALSE;
+	
+	while (*s++ == '\\')
 	{
-		if (*s == '\\')
+		iskey ^= 1;
+
+		if (iskey)
 		{
-			s++;	// skip the slash
+			next = Q_strchr(s + 1, '\\'); // skip key
+			len = next - s;
+			*next = '\0';
+
+			if (len > largest_size && !Info_IsKeyImportant(s))
+			{
+				largest_size = len;
+				plargest = s;
+			}
+
+			*next = '\\';
+			s = next;
+			continue;
 		}
 
-		// Copy a key
-		nCount = 0;
-		c = key;
-		while (*s != '\\')
-		{
-			if (!*s)		// key should end with a \, not a NULL, return this key, so it will be deleted as wrong
-			{
-				*c = 0;
-				Q_strcpy(largest_key, key);
-				return largest_key;
-			}
-			if (nCount >= MAX_KV_LEN)	// oversized key, return this key, so it will be deleted as wrong
-			{
-				*c = 0;
-				Q_strcpy(largest_key, key);
-				return largest_key;
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-		s++;	// skip the slash
-
-		// Get length
-		int size = c - key;
-
-		// Copy a value
-		nCount = 0;
-		c = value;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;				// allow value to be ended with NULL
-			}
-			if (nCount >= MAX_KV_LEN)	// oversized value, return this key, so it will be deleted as wrong
-			{
-				*c = 0;
-				Q_strcpy(largest_key, key);
-				return largest_key;
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-
-		// Add length
-		size += c - value;
-
-		if (size > largest_size && !Info_IsKeyImportant(key))
-		{
-			largest_size = size;
-			Q_strcpy(largest_key, key);
-		}
+		// skip to next slash
+		while (*s && *s != '\\')
+			s++;
 	}
 
-	return largest_key;
+	if (largest_size)
+	{
+		Q_strncpy(largest_key, plargest, sizeof largest_key - 1);
+		largest_key[sizeof largest_key - 1] = '\0';
+		return largest_key;
+	}
+
+	return "";
 }
 
 /* <41063> ../engine/info.c:275 */
 void Info_SetValueForStarKey(char *s, const char *key, const char *value, int maxsize)
 {
 	char newArray[MAX_INFO_STRING];
-	char *v;
-	int c;
 
 	if (!key || !value)
 	{
@@ -388,8 +263,7 @@ void Info_SetValueForStarKey(char *s, const char *key, const char *value, int ma
 
 	if (Q_strstr(key, "..") || Q_strstr(value, ".."))
 	{
-		// TODO: Why silently return?
-		//Con_Printf("Can't use keys or values with a ..\n");
+		Con_Printf("Can't use keys or values with a ..\n");
 		return;
 	}
 
@@ -422,10 +296,9 @@ void Info_SetValueForStarKey(char *s, const char *key, const char *value, int ma
 	}
 
 	// Create key/value pair
-	Q_snprintf(newArray, MAX_INFO_STRING - 1, "\\%s\\%s", key, value);
+	int neededLength = Q_snprintf(newArray, MAX_INFO_STRING - 1, "\\%s\\%s", key, value);
 	newArray[MAX_INFO_STRING - 1] = 0;
 
-	int neededLength = Q_strlen(newArray);
 	if ((int)Q_strlen(s) + neededLength >= maxsize)
 	{
 		// no more room in the buffer to add key/value
@@ -452,19 +325,13 @@ void Info_SetValueForStarKey(char *s, const char *key, const char *value, int ma
 	}
 
 	// auto lowercase team
-	bool lowerCaseValue = Q_stricmp(key, "team") == 0;
-	s += Q_strlen(s);
-	v = newArray;
-	while (*v)
+	if (!Q_stricmp(key, "team"))
 	{
-		c = (unsigned char)*v++;
-		if (lowerCaseValue)
-		{
-			c = tolower(c);
-		}
-		*s++ = c;
+		strcat(s, "\\team\\");
+		strcat(s, value);
 	}
-	*s = 0;
+	else
+		strcat(s, newArray);
 }
 
 /* <4113e> ../engine/info.c:361 */
@@ -482,140 +349,70 @@ void Info_SetValueForKey(char *s, const char *key, const char *value, int maxsiz
 /* <41193> ../engine/info.c:372 */
 void Info_Print(const char *s)
 {
-	char key[MAX_KV_LEN];
-	char value[MAX_KV_LEN];
-	char *c;
-	int l;
-	int nCount;
+	const char *next;
+	qboolean iskey = FALSE;
+	char buf[1024];
+	int len = 0;
 
-	while (*s)
+	while (*s++ == '\\')
 	{
-		if (*s == '\\')
-		{
-			s++;	// skip the slash
-		}
+		// print key
+		next = Q_strchr(s + 1, '\\');
+		len += Q_snprintf(buf + len, sizeof buf - len, "%-20.*s", next - s, s);
+		s = next + 1;
 
-		// Copy a key
-		nCount = 0;
-		c = key;
-		while (*s != '\\')
+		// print value
+		next = Q_strchr(s + 1, '\\');
+		if (next)
 		{
-			if (!*s)
-			{
-				break;		// key should end with a \, not a NULL, but allow to print it
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized key chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
+			len += Q_snprintf(buf + len, sizeof buf - len, "%.*s\n", next - s, s);
+			s = next;
 		}
-		*c = 0;
-		if (*s)
-			s++;	// skip the slash
-
-		// Pad and print a key
-		l = c - key;
-		if (l < 20)
+		else
 		{
-			Q_memset(c, ' ', 20 - l);
-			key[20] = 0;
+			// last value
+			Q_snprintf(buf + len, sizeof buf - len, "%s\n", s);
+			break;
 		}
-		Con_Printf("%s", key);
-
-		if (!*s)
-		{
-			Con_Printf("MISSING VALUE\n");
-			return;
-		}
-
-		// Copy a value
-		nCount = 0;
-		c = value;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;		// allow value to be ended with NULL
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				s++;
-				continue;	// skip oversized value chars till the slash or EOL
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-
-		Con_Printf("%s\n", value);
 	}
+
+	Con_Printf(buf);
 }
 
 /* <4120e> ../engine/info.c:426 */
 qboolean Info_IsValid(const char *s)
 {
-	char key[MAX_KV_LEN];
-	char value[MAX_KV_LEN];
-	char *c;
-	int nCount;
+	const char* v;
 
-	while (*s)
+	while (*s++ == '\\')
 	{
+		// check key
 		if (*s == '\\')
-		{
-			s++;	// skip the slash
-		}
+			return FALSE; // empty keys not allowed
 
-		// Copy a key
-		nCount = 0;
-		c = key;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				return FALSE;		// key should end with a \, not a NULL
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				return FALSE;		// key length should be less then MAX_KV_LEN
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
-		s++;	// skip the slash
+		v = Q_strchr(s, '\\');
 
-		// Copy a value
-		nCount = 0;
-		c = value;
-		while (*s != '\\')
-		{
-			if (!*s)
-			{
-				break;				// allow value to be ended with NULL
-			}
-			if (nCount >= MAX_KV_LEN)
-			{
-				return FALSE;		// value length should be less then MAX_KV_LEN
-			}
-			*c++ = *s++;
-			nCount++;
-		}
-		*c = 0;
+		if (v == NULL)
+			return FALSE; // key should ends with a \, not a NULL
 
-		if (value[0] == 0)
-		{
-			return FALSE;	// empty values are not valid
-		}
+		if (v - s >= MAX_KV_LEN)
+			return FALSE; // key length should be less then MAX_KV_LEN
 
-		if (!*s)
-		{
-			return TRUE;	// EOL, info is valid
-		}
+		// check value
+		v++;
+
+		if (*v == '\\' || *v == '\0')
+			return FALSE; // empty values not allowed
+
+		s = Q_strchr(v, '\\');
+
+		if (s == NULL)
+			for (s = v; *s; s++) // last key, go to EOS
+				;
+
+		if (s - v >= MAX_KV_LEN)
+			return FALSE; // key length should be less then MAX_KV_LEN
 	}
 
-	return FALSE;
+	return TRUE;
 }

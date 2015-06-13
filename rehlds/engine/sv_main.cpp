@@ -4744,8 +4744,6 @@ void SV_ExtractFromUserinfo(client_t *cl)
 {
 	const char *val;
 	int i;
-	client_t *client;
-	int dupc;
 	char newname[MAX_NAME];
 	char rawname[MAX_NAME];
 
